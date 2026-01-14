@@ -1,11 +1,9 @@
 {
   "name": "Damn Vulnerable DeFi Devcontainer",
-
   "build": {
     "dockerfile": "Dockerfile"
   },
-  "features": {
-  },
+  "features": {},
   "customizations": {
     "vscode": {
       "extensions": [
@@ -14,11 +12,21 @@
       ],
       "settings": {
         "terminal.integrated.defaultProfile.linux": "zsh",
-        "terminal.integrated.profiles.linux": { "zsh": { "path": "/usr/bin/zsh" } }
+        "terminal.integrated.profiles.linux": {
+          "zsh": {
+            "path": "/usr/bin/zsh"
+          }
+        }
       }
     }
   },
-
-  "postCreateCommand": "zsh"
+  "postStartCommand": "zsh",
+  // Everything below is needed for securely passing git credentials and ssh key using SSH agent forwarding 
+  "postCreateCommand": "git config --global user.email 'geardev26@gmail.com' && git config --global user.name '0xGearhart'",
+  "mounts": [
+    "type=bind,source=${localEnv:HOME}${localEnv:USERPROFILE}/.ssh,target=/home/vscode/.ssh,readonly"
+  ],
+  "remoteEnv": {
+    "SSH_AUTH_SOCK": "${localEnv:SSH_AUTH_SOCK}"
+  }
 }
-

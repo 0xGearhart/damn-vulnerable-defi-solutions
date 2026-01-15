@@ -51,8 +51,7 @@ contract TrusterChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_truster() public checkSolvedByPlayer {
-        ChallengeSolver solver = new ChallengeSolver(token, pool, recovery);
-        solver.run();
+        new ChallengeSolver(token, pool, recovery);
     }
 
     /**
@@ -82,6 +81,7 @@ contract ChallengeSolver {
         dvt = _dvt;
         lp = _lp;
         recoveryAddress = _recovery;
+        run();
     }
 
     function run() public {

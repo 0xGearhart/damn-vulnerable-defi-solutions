@@ -12,6 +12,11 @@ contract FlashLoanReceiver is IERC3156FlashBorrower {
         pool = _pool;
     }
 
+    // @audit Misiing access controlls allow anyone to take out a flash loan on this contracts beahlf
+    // The first value in onFlashLoan is ignored, but this value is the originator of the flashloan acting as a sudo msg.sender
+    // Ignoring this value allows anyoe to initiate a flash loan to this contract by passing this contracts address as the receiver into the NativeReceiverPool::flashLoan function
+    // This forces this contract to approve and pay the flash loan fee even if they are not the ones initiating the loan
+    // This allows us to drain this contracts weth balance through fees back into the NativeReceiverPool contract by repeatedly taking out loans with this contract as the receiver
     function onFlashLoan(address, address token, uint256 amount, uint256 fee, bytes calldata)
         external
         returns (bytes32)

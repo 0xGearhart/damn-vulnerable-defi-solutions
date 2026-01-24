@@ -82,6 +82,14 @@ contract UnstoppableVault is IERC3156FlashLender, ReentrancyGuard, Owned, ERC462
         if (amount == 0) revert InvalidAmount(0); // fail early
         if (address(asset) != _token) revert UnsupportedCurrency(); // enforce ERC3156 requirement
         uint256 balanceBefore = totalAssets();
+        /**
+         * @audit incompatible accounting systems could cause permanent denial of service
+         * Sending any amount of DVT token to this address will cause a mismatch between `totalAssets()` and `convertToShares(totalSupply)`
+         * This mismatch is caused because `convertToShares(totalSupply)` uses the amount of DVT deposited by this address into the ERC4626 vault
+         * However, the `totalAssets()` function returns the contracts total DVT balance
+         * Since any amount sent directly to the contract is not included in in the ERC4626 accounting, these values will never be what is expected in the revert statement below
+         * This will trigger the UnstoppableMonitor contract which will pause this contract and solve the challenge
+         */
         if (convertToShares(totalSupply) != balanceBefore) revert InvalidBalance(); // enforce ERC4626 requirement
 
         // transfer tokens out + execute callback on receiver

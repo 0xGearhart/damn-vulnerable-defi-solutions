@@ -83,10 +83,12 @@ contract NaiveReceiverPool is Multicall, IERC3156FlashLender {
         totalDeposits += amount;
     }
 
-    // @audit this can be manipulated to trick the function into returning an address that is not actually the msg.sender
-    // sending a call from the fowarder that has the address of someone other than the msg.sender encoded into the function call allows us to spoof that call as any address
-    // we will use this to trick this function into calling withdraw from the deployer address even though we will be calling the fowarder as the player address
-    // this is because it only reads the last 20 bytes which we can load with the deployers address when building the BasicFowarder.Request struct
+    /**
+     * @audit this can be manipulated to trick the function into returning an address that is not actually the msg.sender
+     * sending a call from the fowarder that has the address of someone other than the msg.sender encoded into the function call allows us to spoof that call as any address
+     * we will use this to trick this function into calling withdraw from the deployer address even though we will be calling the fowarder as the player address
+     * this is because it only reads the last 20 bytes which we can load with the deployers address when building the BasicFowarder.Request struct
+     */
     function _msgSender() internal view override returns (address) {
         if (msg.sender == trustedForwarder && msg.data.length >= 20) {
             return address(bytes20(msg.data[msg.data.length - 20:]));

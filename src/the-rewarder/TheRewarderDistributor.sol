@@ -90,6 +90,10 @@ contract TheRewarderDistributor {
             uint256 wordPosition = inputClaim.batchNumber / 256;
             uint256 bitPosition = inputClaim.batchNumber % 256;
 
+            // @audit this check only advances if the current token in the array is different from the last
+            // This means if the next token in the array is the same token as the last, then it will never reach the statement that checks if they have already claimed and sets it to true
+            // To solve the challenge, we can just send an array full of duplicate claims since the _setClaimed only checks once a different token is used
+            // This allows us to drain the contract with a single valid proof duplicated as many times as we need to take all weth and dvt tokens in increments of the valid proofs claim amount
             if (token != inputTokens[inputClaim.tokenIndex]) {
                 if (address(token) != address(0)) {
                     if (!_setClaimed(token, amount, wordPosition, bitsSet)) revert AlreadyClaimed();
@@ -105,6 +109,10 @@ contract TheRewarderDistributor {
 
             // for the last claim
             if (i == inputClaims.length - 1) {
+                // @audit This _setClaimed check also only hits if it is the last token/claim in the array
+                // Since each claim is not checked individually, we can send an array with hundreds of duplicate valid DVT claims followed by hundreds of duplicate valid WETH claims in a single array
+                // This allows us to skip the first _setClaimed check until we move to the WETH claims and this last one is avoided by doing all the duplicate claims in one transaction so this check isn't hit until we are done draining all the DVT and WETH
+                // In short, the claims mapping for DVT is only set to true once we switch to WETH (after all the DVT is drained) and the claims mapping for WETH is only set to true once we hit the last claim in the array (after all the WETH is drained)
                 if (!_setClaimed(token, amount, wordPosition, bitsSet)) revert AlreadyClaimed();
             }
 

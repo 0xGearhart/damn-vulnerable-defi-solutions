@@ -36,11 +36,7 @@ contract SimpleGovernance is ISimpleGovernance {
         actionId = _actionCounter;
 
         _actions[actionId] = GovernanceAction({
-            target: target,
-            value: value,
-            proposedAt: uint64(block.timestamp),
-            executedAt: 0,
-            data: data
+            target: target, value: value, proposedAt: uint64(block.timestamp), executedAt: 0, data: data
         });
 
         unchecked {
@@ -97,6 +93,11 @@ contract SimpleGovernance is ISimpleGovernance {
         return actionToExecute.executedAt == 0 && timeDelta >= ACTION_DELAY_IN_SECONDS;
     }
 
+    // @audit This internal function makes sure whoever is submitting an action has greater than 50% of the DVV supply delegated to their address before allowing them to submit an action
+    // This would not normally be an issue but since the pool has more than 50% of the supply available for flash loans, we can easily exceed the 50% threshold needed to submit an action
+    // Taking the flash loan and exceeding the 50% allows us to submit an action that would allow us to call SelfiePool::emergencyExit with any address we want as the receiver
+    // Thereby allowing us to drain the entire balance of SelfiePool to an address of our choice and continuously submit any proposals we want without intervention
+    // To remedy this, voting power should be determined using snapshots so that a majority cannot be attained and a proposal submitted within the same transaction
     function _hasEnoughVotes(address who) private view returns (bool) {
         uint256 balance = _votingToken.getVotes(who);
         uint256 halfTotalSupply = _votingToken.totalSupply() / 2;

@@ -68,6 +68,10 @@ contract SelfiePool is IERC3156FlashLender, ReentrancyGuard {
         return true;
     }
 
+    // @audit This function withdrawing all DVV to an arbitrary address is dangerous
+    // The access controls on this function help protect funds but there needs to be a designated withdraw address that the funds are sent to
+    // Allowing any address as the recipient is exactly the vulnerability that we need to exploit to pass this challenge
+    // To exploit this, we need to take out a flash loan, delegate that DVV voting power to ourselves, then propose an action to SimpleGovernor that calls emergencyExit with whatever address we want
     function emergencyExit(address receiver) external onlyGovernance {
         uint256 amount = token.balanceOf(address(this));
         token.transfer(receiver, amount);

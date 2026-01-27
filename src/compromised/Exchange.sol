@@ -28,6 +28,7 @@ contract Exchange is ReentrancyGuard {
     }
 
     function buyOne() external payable nonReentrant returns (uint256 id) {
+        // @audit This check prevents us from making the DVNFTs completely free so they have to have a price somewhere between 1 WEI and 0.1 ETH (players starting balance)
         if (msg.value == 0) {
             revert InvalidPayment();
         }

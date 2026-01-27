@@ -52,6 +52,17 @@ contract TrustfulOracle is AccessControlEnumerable {
         renounceRole(INITIALIZER_ROLE, msg.sender);
     }
 
+    // @audit This wouldn't ordinarily be an issue since proper access controls are used
+    // However, since the private keys for 2 of the trusted oracles have been exposed by the server, this function can be used to manipulate DVNFT prices
+    // To solve this challenge we need to:
+    // 1) decode the leaked private keys down to base64 so they can be used
+    // 2) call this function from the leaked accounts to manipulate the DVNFT price to somewhere between 1 WEI and 0.1 ETH (players starting balance) to avoid the Exchange::InvalidPayment error
+    // 3) call Exchange::buyOne so we can buy an NFT for next to nothing
+    // 4) call this postPrice function again to increase the price to exchange.balance
+    // 5) call Exchange::sellOne so we can sell the NFT and receive the entire exchange contracts balance
+    // 6) send proceeds to the designated recovery address
+    // 7) call this postPrice function again to return the DVNFT price to normal
+    // This sequence of events allows us to essentially buy DVNFTs for free and drain the entire Exchange contracts balance
     function postPrice(string calldata symbol, uint256 newPrice) external onlyRole(TRUSTED_SOURCE_ROLE) {
         _setPrice(msg.sender, symbol, newPrice);
     }

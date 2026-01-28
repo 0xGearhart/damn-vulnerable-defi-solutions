@@ -92,7 +92,7 @@ contract PuppetChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_puppet() public checkSolvedByPlayer {
-        
+        ChallengeSolver solver = new ChallengeSolver(token, lendingPool, uniswapV1Exchange, recovery);
     }
 
     // Utility function to calculate Uniswap prices
@@ -114,5 +114,41 @@ contract PuppetChallenge is Test {
         // All tokens of the lending pool were deposited into the recovery account
         assertEq(token.balanceOf(address(lendingPool)), 0, "Pool still has tokens");
         assertGe(token.balanceOf(recovery), POOL_INITIAL_TOKEN_BALANCE, "Not enough tokens in recovery account");
+    }
+}
+
+/*//////////////////////////////////////////////////////////////
+                            SOLUTION
+//////////////////////////////////////////////////////////////*/
+
+contract ChallengeSolver {
+    uint256 constant PLAYER_INITIAL_TOKEN_BALANCE = 1000e18;
+    DamnValuableToken token;
+    PuppetPool lendingPool;
+    IUniswapV1Exchange uniswapV1Exchange;
+    address recovery;
+
+    constructor(
+        DamnValuableToken _token,
+        PuppetPool _lendingPool,
+        IUniswapV1Exchange _uniswapV1Exchange,
+        address _recovery
+    ) {
+        token = _token;
+        lendingPool = _lendingPool;
+        uniswapV1Exchange = _uniswapV1Exchange;
+        recovery = _recovery;
+
+        console.log(
+            "starting deposit required: ", lendingPool.calculateDepositRequired(token.balanceOf(address(lendingPool)))
+        );
+        changePrice();
+        run();
+    }
+
+    function run() public {}
+
+    function changePrice() public {
+        uniswapV1Exchange.addLiquidity(PLAYER_INITIAL_TOKEN_BALANCE, 1000, 1 hours);
     }
 }

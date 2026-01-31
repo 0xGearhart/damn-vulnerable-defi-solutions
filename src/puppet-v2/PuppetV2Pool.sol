@@ -49,6 +49,18 @@ contract PuppetV2Pool {
 
     function calculateDepositOfWETHRequired(uint256 tokenAmount) public view returns (uint256) {
         uint256 depositFactor = 3;
+        // @audit Liquidity pools should never be used as oracles when prices are crucial to core protocol functionality
+        // Pools can be manipulated fairly easily (flash loans, large swaps, liquidity removal/addition) which makes them insecure sources of truth
+        // True price oracles like ChainLink Price Feeds should be used instead as they rely on off-chain reporting that is then saved on-chain to minimize the risk of manipulation
+        // These price feeds should also be checked for staleness and validity to ensure protocol security
+        // We will use this again to solve the puppet V2 challenge:
+        // 1) approve IUniswapV2Router02 to transfer our DVT tokens during a swap
+        // 2) swap all DVT tokens player starts with for WETH using the IUniswapV2Router02 to manipulate the price on IUniswapV2Pair and lower the collateral required on PuppetV2Pool
+        // 3) wrap (deposit) enough ETH to get the required amount of WETH for the borrow call to PuppetV2Pool
+        // 4) approve PuppetV2Pool to transfer our WETH during borrow call
+        // 5) borrow the entire PuppetV2Pool DVT ballance at a reduced price so we don't need much collateral
+        // 6) transfer DVT to recovery account to solve challenge
+        // @note Unlike Puppet V1, ETH must be wrapped into WETH since Uniswap V2 pairs only operate on ERC20 tokens and the lending pool expects WETH collateral
         return _getOracleQuote(tokenAmount) * depositFactor / 1 ether;
     }
 

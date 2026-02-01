@@ -123,7 +123,7 @@ contract FreeRiderChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_freeRider() public checkSolvedByPlayer {
-        // We will solve this challenge by:
+        // This challenge can be solved by:
         // (Sent from EOA)
         // 1) Deploy a challenge solver contract that inherits IUniswapV2Callee and IERC721Receiver and fund with enough ETH to pay flash swap fee
         // 2) Call run() on ChallengeSolver contract and initiate flash swap

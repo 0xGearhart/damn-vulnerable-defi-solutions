@@ -103,7 +103,7 @@ contract PuppetChallenge is Test {
         uniswapV1Exchange.tokenToEthSwapInput(token.balanceOf(player), 1, 1 hours);
 
         // deploy challenge solver contract and fund with ETH to make other operations in one tx
-        ChallengeSolver solver = new ChallengeSolver{value: player.balance}(token, lendingPool, recovery);
+        new ChallengeSolver{value: player.balance}(token, lendingPool, recovery);
     }
 
     // Utility function to calculate Uniswap prices

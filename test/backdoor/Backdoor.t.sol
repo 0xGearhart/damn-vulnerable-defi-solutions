@@ -70,7 +70,7 @@ contract BackdoorChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_backdoor() public checkSolvedByPlayer {
-        
+        new ChallengeSolver(token, singletonCopy, walletFactory, walletRegistry, recovery, users);
     }
 
     /**
@@ -92,5 +92,49 @@ contract BackdoorChallenge is Test {
 
         // Recovery account must own all tokens
         assertEq(token.balanceOf(recovery), AMOUNT_TOKENS_DISTRIBUTED);
+    }
+}
+
+/*//////////////////////////////////////////////////////////////
+                            SOLUTION
+//////////////////////////////////////////////////////////////*/
+
+contract ChallengeSolver {
+    DamnValuableToken token;
+    Safe singletonCopy;
+    SafeProxyFactory walletFactory;
+    WalletRegistry walletRegistry;
+    address recovery;
+    address[] users;
+
+    constructor(
+        DamnValuableToken _token,
+        Safe _singletonCopy,
+        SafeProxyFactory _walletFactory,
+        WalletRegistry _walletRegistry,
+        address _recovery,
+        address[] memory _users
+    ) {
+        token = _token;
+        singletonCopy = _singletonCopy;
+        walletFactory = _walletFactory;
+        walletRegistry = _walletRegistry;
+        recovery = _recovery;
+        users = _users;
+
+        run();
+    }
+
+    function run() public {
+        // set input parameters for safe proxy deployment
+        uint256 saltNonce;
+        bytes memory initializerDataForSafeCreation;
+        // deploy new safe wallet proxy contract from SafeProxyFactory
+        walletFactory.createProxyWithCallback(
+            address(singletonCopy), initializerDataForSafeCreation, saltNonce, walletRegistry
+        );
+
+        // transfer rescued tokens to recovery address
+        token.transfer(recovery, token.balanceOf(address(this)));
     }
 }

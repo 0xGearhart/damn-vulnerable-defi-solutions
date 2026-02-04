@@ -98,6 +98,17 @@ contract FreeRiderNFTMarketplace is ReentrancyGuard {
         // msg.value is constant for the entire duration of a call and does not decrease as ETH is spent during execution.
         // In buyMany(), msg.value is reused for each iteration of the loop, allowing a caller to pay only once while purchasing multiple NFTs.
         // As long as the caller provides enough ETH for a single purchase, they can buy all NFTs in the same transaction for the price of one.
+        //
+        // Impact:
+        // - Allows attackers to underpay for assets
+        // - Leads to direct loss of funds for the marketplace
+        //
+        // Root cause:
+        // - Treating msg.value as a mutable balance instead of tracking remaining ETH
+        //
+        // Recommended fix:
+        // - Track remaining value in a local variable and decrement per purchase
+        // - OR require msg.value == price * tokenIds.length
         if (msg.value < priceToPay) {
             revert InsufficientPayment();
         }

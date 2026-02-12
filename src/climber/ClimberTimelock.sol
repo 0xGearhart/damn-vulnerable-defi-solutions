@@ -87,6 +87,41 @@ contract ClimberTimelock is ClimberTimelockBase {
 
         bytes32 id = getOperationId(targets, values, dataElements, salt);
 
+        // @audit - Critical - Timelock Allows Self-Authorization During Execution
+        // The ClimberTimelock.execute() function performs all external calls associated with an operation before validating that the operation is in the ReadyForExecution state.
+        // This allows an attacker to include state-mutating timelock calls within the same execution batch, enabling the operation to schedule and authorize itself mid-execution.
+        // As a result, an attacker can bypass the intended scheduling and delay mechanism and execute arbitrary privileged actions immediately.
+        //
+        // - Impact:
+        // An attacker can:
+        //      - Reduce the timelock delay to zero
+        //      - Grant the proposer role to a chosen address
+        //      - Schedule the currently executing operation
+        //      - Execute arbitrary privileged calls (upgrade a UUPS vault implementation)
+        // This enables full protocol takeover and arbitrary asset extraction.
+        // In this challenge context, the attacker upgrades the vault implementation and drains all tokens.
+        // In a production system, this would result in complete loss of control over the governed contract.
+        //
+        // - Root cause:
+        // ClimberTimelock.execute() follows this structure:
+        //  1) Compute operation ID.
+        //  2) Perform all external calls in a loop.
+        //  3) Only then check whether the operation is ReadyForExecution.
+        // This violates the Checks–Effects–Interactions (CEI) pattern.
+        // Because the validation occurs after the calls, the batched actions may modify timelock state (delay, roles, scheduling status) such that the final state check passes, even if the operation was not previously scheduled or authorized.
+        //
+        // - Recommended fix:
+        // Reorder logic in ClimberTimelock.execute() to validate operation state before performing any external calls.
+        // Specifically, the following check:
+        //
+        // if (getOperationState(id) != OperationState.ReadyForExecution) {
+        //     revert NotReadyForExecution(id);
+        // }
+        //
+        // should occur before executing the batched calls.
+        // Optionally:
+        // Mark the operation as executed before external calls to reduce reentrancy/state-manipulation surface.
+        // Consider separating role administration from executable timelock actions.
         for (uint8 i = 0; i < targets.length; ++i) {
             targets[i].functionCallWithValue(dataElements[i], values[i]);
         }

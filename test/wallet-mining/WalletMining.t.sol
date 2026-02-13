@@ -9,7 +9,9 @@ import {SafeProxy} from "@safe-global/safe-smart-account/contracts/proxies/SafeP
 import {DamnValuableToken} from "../../src/DamnValuableToken.sol";
 import {WalletDeployer} from "../../src/wallet-mining/WalletDeployer.sol";
 import {
-    AuthorizerFactory, AuthorizerUpgradeable, TransparentProxy
+    AuthorizerFactory,
+    AuthorizerUpgradeable,
+    TransparentProxy
 } from "../../src/wallet-mining/AuthorizerFactory.sol";
 import {
     ICreateX,
@@ -84,10 +86,11 @@ contract WalletMiningChallenge is Test {
         aims[0] = USER_DEPOSIT_ADDRESS;
 
         AuthorizerFactory authorizerFactory = AuthorizerFactory(
-            ICreateX(CREATEX_ADDRESS).deployCreate2({
-                salt: bytes32(keccak256("dvd.walletmining.authorizerfactory")),
-                initCode: type(AuthorizerFactory).creationCode
-            })
+            ICreateX(CREATEX_ADDRESS)
+                .deployCreate2({
+                    salt: bytes32(keccak256("dvd.walletmining.authorizerfactory")),
+                    initCode: type(AuthorizerFactory).creationCode
+                })
         );
         authorizer = AuthorizerUpgradeable(authorizerFactory.deployWithProxy(wards, aims, upgrader));
 
@@ -99,19 +102,20 @@ contract WalletMiningChallenge is Test {
             address(SAFE_SINGLETON_FACTORY_ADDRESS).call(bytes.concat(bytes32(""), type(Safe).creationCode));
         singletonCopy = Safe(payable(address(uint160(bytes20(returndata)))));
 
-        (success, returndata) =
-            address(SAFE_SINGLETON_FACTORY_ADDRESS).call(bytes.concat(bytes32(""), type(SafeProxyFactory).creationCode));
+        (success, returndata) = address(SAFE_SINGLETON_FACTORY_ADDRESS)
+            .call(bytes.concat(bytes32(""), type(SafeProxyFactory).creationCode));
         proxyFactory = SafeProxyFactory(address(uint160(bytes20(returndata))));
 
         // Deploy wallet deployer
         walletDeployer = WalletDeployer(
-            ICreateX(CREATEX_ADDRESS).deployCreate2({
-                salt: bytes32(keccak256("dvd.walletmining.walletdeployer")),
-                initCode: bytes.concat(
-                    type(WalletDeployer).creationCode,
-                    abi.encode(address(token), address(proxyFactory), address(singletonCopy), deployer) // constructor args are appended at the end of creation code
-                )
-            })
+            ICreateX(CREATEX_ADDRESS)
+                .deployCreate2({
+                    salt: bytes32(keccak256("dvd.walletmining.walletdeployer")),
+                    initCode: bytes.concat(
+                        type(WalletDeployer).creationCode,
+                        abi.encode(address(token), address(proxyFactory), address(singletonCopy), deployer) // constructor args are appended at the end of creation code
+                    )
+                })
         );
 
         // Set authorizer in wallet deployer
@@ -157,7 +161,20 @@ contract WalletMiningChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_walletMining() public checkSolvedByPlayer {
-        
+        // Constraints:
+        // User must not send a transaction even tho we have their private key
+        // Player can only send 1 transaction
+
+        // Steps to solve Wallet Mining challenge:
+        // 1) Deploy ChallengeSolver contract to execute all necessary operations in one transaction
+        // 2) Recover all tokens from the wallet deployer contract and send them to the corresponding ward
+        // 3) figure out the nonce that deploys the safe to the correct address
+        // 4) deploy safe on behalf of user to expected safe address
+        // 5) recover funds from safe and send to user
+
+        ChallengeSolver solver = new ChallengeSolver(
+            token, authorizer, walletDeployer, proxyFactory, singletonCopy, user, userPrivateKey, ward
+        );
     }
 
     /**
@@ -189,4 +206,45 @@ contract WalletMiningChallenge is Test {
         // Player sent payment to ward
         assertEq(token.balanceOf(ward), initialWalletDeployerTokenBalance, "Not enough tokens in ward's account");
     }
+}
+
+/*//////////////////////////////////////////////////////////////
+                            SOLUTION
+//////////////////////////////////////////////////////////////*/
+
+contract ChallengeSolver {
+    address constant USER_DEPOSIT_ADDRESS = 0xCe07CF30B540Bb84ceC5dA5547e1cb4722F9E496;
+    address user;
+    uint256 userPrivateKey;
+    address ward;
+
+    DamnValuableToken token;
+    AuthorizerUpgradeable authorizer;
+    WalletDeployer walletDeployer;
+    SafeProxyFactory proxyFactory;
+    Safe singletonCopy;
+
+    constructor(
+        DamnValuableToken token_,
+        AuthorizerUpgradeable authorizer_,
+        WalletDeployer walletDeployer_,
+        SafeProxyFactory proxyFactory_,
+        Safe singletonCopy_,
+        address user_,
+        uint256 userPrivateKey_,
+        address ward_
+    ) {
+        token = token_;
+        authorizer = authorizer_;
+        walletDeployer = walletDeployer_;
+        proxyFactory = proxyFactory_;
+        singletonCopy = singletonCopy_;
+        user = user_;
+        userPrivateKey = userPrivateKey_;
+        ward = ward_;
+
+        run();
+    }
+
+    function run() public {}
 }

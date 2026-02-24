@@ -172,6 +172,9 @@ contract WalletMiningChallenge is Test {
         // 4) deploy safe on behalf of user to expected safe address
         // 5) recover funds from safe and send to user
 
+        assert(address(walletDeployer.cpy()) == address(singletonCopy));
+        assert(address(walletDeployer.cook()) == address(proxyFactory));
+
         // deploy challenge solver contract to execute necessary operations in one transaction
         new ChallengeSolver(token, authorizer, walletDeployer, proxyFactory, ward, user, userPrivateKey);
     }
@@ -216,6 +219,7 @@ import {Enum} from "@safe-global/safe-smart-account/contracts/common/Enum.sol";
 
 contract ChallengeSolver is Test {
     error ChallengeSolver__SafeTokenTransferFailed();
+    error ChallengeSolver__SaltNotFound();
 
     address constant USER_DEPOSIT_ADDRESS = 0xCe07CF30B540Bb84ceC5dA5547e1cb4722F9E496;
     uint256 constant DEPOSIT_TOKEN_AMOUNT = 20_000_000e18;
@@ -260,10 +264,10 @@ contract ChallengeSolver is Test {
         _deploySafeProxyAtUserDepositAddress();
 
         // transfer tokens received as deployment incentive to ward address for challenge requirement
-        // token.transfer(ward, walletDeployerBalance);
+        token.transfer(ward, walletDeployerBalance);
 
         // rescue funds from user safe and send to user
-        // _sendFundsFromSafeToUserWithSafeTransaction();
+        _sendFundsFromSafeToUserWithSafeTransaction();
     }
 
     function _authorizeChallengeSolverAsWard() internal {
@@ -279,9 +283,6 @@ contract ChallengeSolver is Test {
     }
 
     function _deploySafeProxyAtUserDepositAddress() internal {
-        // initial salt nonce needed to get safe proxy deployed at required address
-        uint256 saltNonce = 0;
-
         // load initialization data for basic safe proxy deployment on users behalf
         address[] memory owners = new address[](1);
         owners[0] = user;
@@ -298,75 +299,81 @@ contract ChallengeSolver is Test {
 
         console.logBytes32(keccak256(initializerDataForSafeCreation)); // = 0x63abaf09a56a704390e7608eea07de782d4306abae05ddc2ef967e9199e099b6
 
-        // uint256 saltNonce = _mineSaltNonce(initializerDataForSafeCreation);
+        // mine initial salt nonce needed to get safe proxy deployed at required address by predicting addresses created with different nonces
+        uint256 saltNonce = _mineSaltNonce(initializerDataForSafeCreation);
+
+        console.log("Matching Salt Nonce Found: ", saltNonce);
 
         // deploy safe proxy as an approved ward to receive deployment reward and rescue funds stuck at user deposit address
         walletDeployer.drop(USER_DEPOSIT_ADDRESS, initializerDataForSafeCreation, saltNonce);
     }
 
-    function _mineSaltNonce(bytes memory initializerDataForSafeCreation) internal returns (uint256) {
-        SafeProxy proxy;
+    function _mineSaltNonce(bytes memory initializerDataForSafeCreation) internal view returns (uint256) {
+        address predictedAddress;
         address cpy = walletDeployer.cpy();
+        address cook = address(walletDeployer.cook());
         bytes memory creationCode = proxyFactory.proxyCreationCode();
-        for (uint256 i = 0; i < 2000; i++) {
-            bytes32 salt = keccak256(abi.encodePacked(keccak256(initializerDataForSafeCreation), i));
-            bytes memory deploymentData = abi.encodePacked(creationCode, uint256(uint160(cpy)));
-            // solhint-disable-next-line no-inline-assembly
-            assembly {
-                proxy := create2(0x0, add(0x20, deploymentData), mload(deploymentData), salt)
-            }
-            if (address(proxy) == USER_DEPOSIT_ADDRESS) {
+        for (uint256 i = 0; i < 1_000_000; i++) {
+            predictedAddress = _predictDeployedAddress(cook, cpy, initializerDataForSafeCreation, i, creationCode);
+            if (predictedAddress == USER_DEPOSIT_ADDRESS) {
                 return i;
             }
         }
+        revert ChallengeSolver__SaltNotFound();
+    }
+
+    function _predictDeployedAddress(
+        address cook,
+        address cpy,
+        bytes memory initializerDataForSafeCreation,
+        uint256 saltNonce,
+        bytes memory creationCode
+    ) internal pure returns (address predictedAddress) {
+        bytes32 salt = keccak256(abi.encodePacked(keccak256(initializerDataForSafeCreation), saltNonce));
+        bytes memory deploymentData = abi.encodePacked(creationCode, uint256(uint160(cpy)));
+        bytes32 deploymentDataHash = keccak256(deploymentData);
+        bytes32 create2DeploymentHash = keccak256(abi.encodePacked(bytes1(0xff), cook, salt, deploymentDataHash));
+        predictedAddress = address(uint160(uint256(create2DeploymentHash)));
     }
 
     function _sendFundsFromSafeToUserWithSafeTransaction() internal {
-        // wrap address to be used in user safe calls
-        Safe userDeployedSafe = Safe(payable(USER_DEPOSIT_ADDRESS));
-
-        // load variables to be used in safe execTransaction call
-        address safeTransactionTo = address(token);
-        uint256 value = 0;
+        // load transaction data to be used in safe execTransaction call
         bytes memory safeTransactionData = abi.encodeWithSelector(token.transfer.selector, user, DEPOSIT_TOKEN_AMOUNT);
-        Enum.Operation operation = Enum.Operation.Call; // 0 = call, 1 = delegatecall
-        uint256 safeTxGas = 0;
-        uint256 baseGas = 0;
-        uint256 gasPrice = 0;
-        address gasToken = address(0);
-        address payable refundReceiver = payable(address(this));
-        uint256 nonce = userDeployedSafe.nonce();
 
         // hash safe transaction data to be signed with users private key
-        bytes32 safeTransactionDigest = userDeployedSafe.getTransactionHash(
-            safeTransactionTo,
-            value,
-            safeTransactionData,
-            operation,
-            safeTxGas,
-            baseGas,
-            gasPrice,
-            gasToken,
-            refundReceiver,
-            nonce
-        );
+        bytes32 safeTransactionDigest = Safe(payable(USER_DEPOSIT_ADDRESS))
+            .getTransactionHash(
+                address(token), // safeTransactionTo
+                0, // value
+                safeTransactionData,
+                Enum.Operation.Call, // 0 = call, 1 = delegatecall
+                0, // safeTxGas
+                0, // baseGas
+                0, // gasPrice
+                address(0), // gasToken
+                payable(address(this)), // refundReceiver
+                Safe(payable(USER_DEPOSIT_ADDRESS)).nonce()
+            );
 
         // sign safe transaction with users private key and pack for verification
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, safeTransactionDigest);
-        bytes memory signatures = abi.encode(r, s, v);
+        bytes memory signatures = abi.encodePacked(r, s, v);
 
-        bool success = userDeployedSafe.execTransaction(
-            safeTransactionTo,
-            value,
-            safeTransactionData,
-            operation,
-            safeTxGas,
-            baseGas,
-            gasPrice,
-            gasToken,
-            refundReceiver,
-            signatures
-        );
+        // execute safe operation on behalf of user to recover funds
+        bool success = Safe(payable(USER_DEPOSIT_ADDRESS))
+            .execTransaction(
+                address(token), // safeTransactionTo
+                0, //value
+                safeTransactionData,
+                Enum.Operation.Call, // 0 = call, 1 = delegatecall
+                0, // safeTxGas
+                0, // baseGas
+                0, // gasPrice
+                address(0), // gasToken
+                payable(address(this)), // refundReceiver
+                signatures
+            );
+        // verify execution success
         if (!success) {
             revert ChallengeSolver__SafeTokenTransferFailed();
         }

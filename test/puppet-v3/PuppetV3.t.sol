@@ -62,10 +62,7 @@ contract PuppetV3Challenge is Test {
         address token0 = isWethFirst ? address(weth) : address(token);
         address token1 = isWethFirst ? address(token) : address(weth);
         positionManager.createAndInitializePoolIfNecessary({
-            token0: token0,
-            token1: token1,
-            fee: FEE,
-            sqrtPriceX96: _encodePriceSqrt(1, 1)
+            token0: token0, token1: token1, fee: FEE, sqrtPriceX96: _encodePriceSqrt(1, 1)
         });
 
         IUniswapV3Pool uniswapPool = IUniswapV3Pool(uniswapFactory.getPool(address(weth), address(token), FEE));
@@ -119,7 +116,36 @@ contract PuppetV3Challenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_puppetV3() public checkSolvedByPlayer {
-        
+        // Constraints:
+        // Less than 115 seconds can pass during challenge
+        // Player only starts with 1 ETH and 110 DVT
+
+        // Steps to solve PuppetV3 challenge:
+        // 1) Manipulate price
+        // 2) Drain lending pool
+        // 3) Send funds to recovery address
+
+        // check how much WETH would be required to borrow lendingPool's total DVT balance
+        console.log(
+            "starting deposit required: ",
+            lendingPool.calculateDepositOfWETHRequired(token.balanceOf(address(lendingPool)))
+        );
+
+        // get pool address from factory
+        console.log("pool address: ", uniswapFactory.getPool(address(weth), address(token), FEE));
+        // save uniswapV3Pool to interact with
+        IUniswapV3Pool uniswapV3Pool = IUniswapV3Pool(uniswapFactory.getPool(address(weth), address(token), FEE));
+
+        // verify which token is which since uniswap sorts them by lowest address so it's never a guarantee which is WETH
+        assert(address(token) == uniswapV3Pool.token0());
+        assert(address(weth) == uniswapV3Pool.token1());
+        // save token address assignments to keep interactions clear
+        address token0 = address(token);
+        address token1 = address(weth);
+
+        // check pair liquidity for current price range
+        (uint128 poolLiquidity) = uniswapV3Pool.liquidity();
+        console.log("amount of token0 & token1 liquidity available in this range: ", poolLiquidity);
     }
 
     /**

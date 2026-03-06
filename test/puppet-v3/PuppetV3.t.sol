@@ -146,6 +146,32 @@ contract PuppetV3Challenge is Test {
         // check pair liquidity for current price range
         (uint128 poolLiquidity) = uniswapV3Pool.liquidity();
         console.log("amount of token0 & token1 liquidity available in this range: ", poolLiquidity);
+
+        // check slot0 values
+        (
+            uint160 sqrtPriceX96,
+            int24 tick,
+            uint16 observationIndex,
+            uint16 observationCardinality,
+            uint16 observationCardinalityNext,
+            uint8 feeProtocol,
+            bool unlocked
+        ) = uniswapV3Pool.slot0();
+        console.log("sqrtPriceX96: ", sqrtPriceX96);
+        console.log("tick: ", tick);
+        console.log("observationIndex: ", observationIndex);
+        console.log("observationCardinality: ", observationCardinality);
+        console.log("observationCardinalityNext: ", observationCardinalityNext);
+        console.log("feeProtocol: ", feeProtocol);
+        console.log("unlocked: ", unlocked);
+
+        // calculate price from sqrtPriceX96
+        uint256 price = (uint256(sqrtPriceX96) * uint256(sqrtPriceX96)) / (2 ** 96 * 2 ** 96);
+        console.log("price token1/token0: ", price);
+
+        // get amount of DVT to swap for WETH to push price in the direction we want
+        uint256 amountDvtToSwap = token.balanceOf(player);
+        // approve uniswap router to swap tokens for weth
     }
 
     /**

